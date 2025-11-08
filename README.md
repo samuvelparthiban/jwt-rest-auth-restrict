@@ -1,6 +1,5 @@
 === JWT REST Auth Restrict ===
 Contributors: SamuvelParthiban
-Donate link: https://shoppazaar.com/
 Tags: jwt, rest-api, authentication, security, woocommerce
 Requires at least: 5.0
 Tested up to: 6.6
