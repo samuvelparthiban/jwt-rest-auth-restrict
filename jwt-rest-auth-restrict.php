@@ -56,7 +56,7 @@ add_action('plugins_loaded', function() {
     }
 
     // ✅ Include admin page only when JWT plugin active
-    require_once plugin_dir_path(__FILE__) . 'admin/admin-settings.php';
+    require_once plugin_dir_path(__FILE__) . 'wp-admin/admin-settings.php';
 
     /**
      * ✅ REST Authentication Restriction Logic
@@ -100,8 +100,62 @@ add_action('plugins_loaded', function() {
         // Custom error message
         $error_message = get_option('jwt_rest_error_message', 'You must be logged in to access this REST API.');
 
-        // Restrict unauthenticated users
+        // Check if user is authenticated via WordPress or JWT
+        $headers = getallheaders();
+
+        // 🔹 Safely get Authorization from all possible sources
+        $auth = $headers['Authorization'] ??
+                 $_SERVER['REDIRECT_HTTP_AUTHORIZATION'] ??
+                 $_SERVER['HTTP_AUTHORIZATION'] ??
+                 '';
+
+        // 🔹 If not logged in, check JWT token manually
         if (!is_user_logged_in()) {
+            $token = '';
+
+            // ✅ Extract token from "Authorization: Bearer <token>"
+            if (!empty($auth) && strpos($auth, 'Bearer ') === 0) {
+                $token = trim(str_replace('Bearer ', '', $auth));
+            }
+           
+            // ✅ Fallback: Allow ?token=xyz in query
+            if (empty($token) && isset($_GET['token'])) {
+                $token = sanitize_text_field($_GET['token']);
+            }
+
+            // ✅ Validate JWT manually
+            if (!empty($token)) {
+                $url = site_url('/wp-json/jwt-auth/v1/token/validate');
+
+				$response = wp_remote_post($url, [
+					'headers' => [
+						'Authorization' => 'Bearer ' . $token,
+						'Content-Type'  => 'application/json',
+					],
+				]);
+
+				 if (is_wp_error($response)) {
+                    return new WP_Error(
+                        'jwt_validate_failed',
+                        'Token validation request failed: ' . $response->get_error_message(),
+                        ['status' => 500]
+                    );
+                }
+
+				$body = wp_remote_retrieve_body($response);
+				$data = json_decode($body);
+
+				if (!empty($data) && isset($data->code) && $data->code === 'jwt_auth_valid_token') {
+                    return $result; // ✅ Valid token
+                }
+				// ⚠️ Return proper status for invalid/expired token
+                $message = $data->message ?? 'Invalid or expired token';
+                $code = $data->code ?? 'jwt_auth_invalid_token';
+
+                return new WP_Error($code, $message, ['status' => 403]);
+            }
+
+            // ❌ Neither logged in nor valid JWT
             return new WP_Error(
                 'rest_forbidden',
                 $error_message,
